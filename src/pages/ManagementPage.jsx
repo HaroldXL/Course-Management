@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+﻿import { useState, useEffect } from "react";
 import {
   Modal,
   Form,
@@ -23,6 +23,7 @@ import {
   AlertCircle,
   LogOut,
   UserCheck,
+  PlusCircle,
 } from "lucide-react";
 import subjectService from "../services/subjectService";
 import semesterService from "../services/semesterService";
@@ -30,6 +31,7 @@ import examinerService from "../services/examinerService";
 import examService from "../services/examService";
 import rubricService from "../services/rubricService";
 import submissionService from "../services/submissionService";
+import submissionDetailService from "../services/submissionDetailService";
 import violationService from "../services/violationService";
 import authService from "../services/authService";
 import "./ManagementPage.css";
@@ -54,6 +56,7 @@ const ManagementPage = () => {
   const userRole = currentUser?.role || "";
   const isAdmin = userRole === "Admin";
   const isManager = userRole === "Manager";
+  const isExaminer = userRole === "Examiner";
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -71,11 +74,32 @@ const ManagementPage = () => {
   const [selectedExamRubrics, setSelectedExamRubrics] = useState([]);
   const [loadingRubrics, setLoadingRubrics] = useState(false);
 
+  // Create rubric modal states
+  const [isCreateRubricModalOpen, setIsCreateRubricModalOpen] = useState(false);
+  const [creatingRubricExam, setCreatingRubricExam] = useState(null);
+  const [creatingRubric, setCreatingRubric] = useState(false);
+  const [examRubrics, setExamRubrics] = useState({}); // Map of examId -> rubrics array
+  const [createRubricForm] = Form.useForm();
+
   // Violation modal states
   const [isViolationModalOpen, setIsViolationModalOpen] = useState(false);
   const [selectedSubmissionViolations, setSelectedSubmissionViolations] =
     useState([]);
   const [loadingViolations, setLoadingViolations] = useState(false);
+
+  // Submission detail modal states
+  const [isSubmissionDetailModalOpen, setIsSubmissionDetailModalOpen] =
+    useState(false);
+  const [selectedSubmissionDetail, setSelectedSubmissionDetail] =
+    useState(null);
+  const [currentSubmissionId, setCurrentSubmissionId] = useState(null);
+  const [loadingSubmissionDetail, setLoadingSubmissionDetail] = useState(false);
+
+  // Grade modal states
+  const [isGradeModalOpen, setIsGradeModalOpen] = useState(false);
+  const [gradingSubmission, setGradingSubmission] = useState(null);
+  const [grading, setGrading] = useState(false);
+  const [gradeForm] = Form.useForm();
 
   useEffect(() => {
     loadData();
@@ -111,6 +135,25 @@ const ManagementPage = () => {
           ]);
         if (examsResponse.isSuccess) {
           setExams(examsResponse.data);
+          // Load rubrics for all exams to check which ones have rubrics
+          const rubricsMap = {};
+          await Promise.all(
+            examsResponse.data.map(async (exam) => {
+              try {
+                const rubricResponse = await rubricService.getByExamId(exam.id);
+                if (
+                  rubricResponse.isSuccess &&
+                  rubricResponse.data.length > 0
+                ) {
+                  rubricsMap[exam.id] = rubricResponse.data;
+                }
+              } catch (err) {
+                // Exam has no rubrics
+                rubricsMap[exam.id] = [];
+              }
+            })
+          );
+          setExamRubrics(rubricsMap);
         }
         if (subjectsResponse.isSuccess) {
           setSubjects(subjectsResponse.data);
@@ -161,20 +204,40 @@ const ManagementPage = () => {
     });
   };
 
-  const hasViolation = (submissionId) => {
-    return violations.some((v) => v.submissionId === submissionId);
+  const handleViewSubmissionDetail = async (submissionId) => {
+    setLoadingSubmissionDetail(true);
+    setIsSubmissionDetailModalOpen(true);
+    setSelectedSubmissionDetail(null);
+    setCurrentSubmissionId(submissionId);
+
+    try {
+      const response = await submissionDetailService.getBySubmissionId(
+        submissionId
+      );
+      setSelectedSubmissionDetail(response);
+    } catch (err) {
+      message.error("Không thể tải chi tiết bài nộp: " + err.message);
+      setSelectedSubmissionDetail(null);
+    } finally {
+      setLoadingSubmissionDetail(false);
+    }
   };
 
-  const getViolationCount = (submissionId) => {
-    return violations.filter((v) => v.submissionId === submissionId).length;
-  };
+  const handleDownloadSubmission = async (submissionId) => {
+    try {
+      message.loading("Đang tạo link tải xuống...", 0);
+      const response = await submissionDetailService.getDownloadUrl(
+        submissionId
+      );
+      message.destroy();
 
-  const handleViewViolations = (submissionId) => {
-    const submissionViolations = violations.filter(
-      (v) => v.submissionId === submissionId
-    );
-    setSelectedSubmissionViolations(submissionViolations);
-    setIsViolationModalOpen(true);
+      // Open download URL in new tab
+      window.open(response.downloadUrl, "_blank");
+      message.success("Đang tải file...");
+    } catch (err) {
+      message.destroy();
+      message.error("Không thể tải file: " + err.message);
+    }
   };
 
   const handleLogout = () => {
@@ -211,6 +274,41 @@ const ManagementPage = () => {
       message.error("Có lỗi xảy ra khi phân công giám khảo!");
     } finally {
       setAssigningExaminer(false);
+    }
+  };
+
+  const handleGradeSubmission = (submission) => {
+    setGradingSubmission(submission);
+    setIsGradeModalOpen(true);
+    gradeForm.setFieldsValue({
+      totalScore: submission.totalScore || null,
+    });
+  };
+
+  const handleGradeSubmit = async (values) => {
+    if (!gradingSubmission) return;
+
+    setGrading(true);
+    try {
+      const response = await submissionService.gradeSubmission(
+        gradingSubmission.id,
+        values.totalScore
+      );
+
+      if (response.isSuccess) {
+        message.success("Chấm điểm thành công!");
+        setIsGradeModalOpen(false);
+        setGradingSubmission(null);
+        gradeForm.resetFields();
+        loadData();
+      } else {
+        message.error(response.message || "Chấm điểm thất bại!");
+      }
+    } catch (error) {
+      console.error("Grade submission error:", error);
+      message.error("Có lỗi xảy ra khi chấm điểm!");
+    } finally {
+      setGrading(false);
     }
   };
 
@@ -278,8 +376,6 @@ const ManagementPage = () => {
       form.setFieldsValue({
         examId: item.examId,
         studentCode: item.studentCode,
-        fileUrl: item.fileUrl,
-        status: item.status,
         totalScore: item.totalScore,
         examinerId: item.examinerId,
       });
@@ -307,6 +403,46 @@ const ManagementPage = () => {
       setSelectedExamRubrics([]);
     } finally {
       setLoadingRubrics(false);
+    }
+  };
+
+  const handleCreateRubric = (exam) => {
+    setCreatingRubricExam(exam);
+    setIsCreateRubricModalOpen(true);
+    createRubricForm.resetFields();
+    // Initialize with one empty criterion
+    createRubricForm.setFieldsValue({
+      rubricCriteria: [{ criterionName: "", maxScore: null }],
+    });
+  };
+
+  const handleCreateRubricSubmit = async (values) => {
+    if (!creatingRubricExam) return;
+
+    setCreatingRubric(true);
+    try {
+      const rubricData = {
+        name: values.name,
+        examId: creatingRubricExam.id,
+        rubricCriteria: values.rubricCriteria,
+      };
+
+      const response = await rubricService.create(rubricData);
+
+      if (response.isSuccess) {
+        message.success("Thêm tiêu chí chấm điểm thành công!");
+        setIsCreateRubricModalOpen(false);
+        setCreatingRubricExam(null);
+        createRubricForm.resetFields();
+        loadData(); // Reload data to update rubrics
+      } else {
+        message.error(response.message || "Thêm tiêu chí chấm điểm thất bại!");
+      }
+    } catch (error) {
+      console.error("Create rubric error:", error);
+      message.error("Có lỗi xảy ra khi thêm tiêu chí chấm điểm!");
+    } finally {
+      setCreatingRubric(false);
     }
   };
 
@@ -348,8 +484,6 @@ const ManagementPage = () => {
           await submissionService.update(editingItem.id, {
             examId: values.examId,
             studentCode: values.studentCode,
-            fileUrl: values.fileUrl,
-            status: values.status,
             totalScore: values.totalScore || null,
             examinerId: values.examinerId || null,
           });
@@ -390,8 +524,6 @@ const ManagementPage = () => {
           await submissionService.create({
             examId: values.examId,
             studentCode: values.studentCode,
-            fileUrl: values.fileUrl,
-            status: values.status,
             totalScore: values.totalScore || null,
             examinerId: values.examinerId || null,
           });
@@ -426,41 +558,64 @@ const ManagementPage = () => {
       <div className="sidebar">
         <div className="sidebar-header">
           <h2>Trang Quản Lý</h2>
+          <div
+            style={{
+              marginTop: "12px",
+              padding: "10px 12px",
+              backgroundColor: "#f0f9ff",
+              borderRadius: "8px",
+              borderLeft: "3px solid #6366f1",
+            }}
+          >
+            <span
+              style={{
+                color: "#6366f1",
+                fontWeight: "600",
+                fontSize: "14px",
+              }}
+            >
+              {userRole}
+            </span>
+          </div>
         </div>
         <nav className="sidebar-nav">
-          <button
-            className={`nav-item ${
-              activeSection === "subjects" ? "active" : ""
-            }`}
-            onClick={() => setActiveSection("subjects")}
-          >
-            <BookOpen size={18} />
-            <span>Quản lý môn học</span>
-          </button>
-          <button
-            className={`nav-item ${
-              activeSection === "semesters" ? "active" : ""
-            }`}
-            onClick={() => setActiveSection("semesters")}
-          >
-            <Calendar size={18} />
-            <span>Quản lý học kỳ</span>
-          </button>
-          <button
-            className={`nav-item ${
-              activeSection === "examiners" ? "active" : ""
-            }`}
-            onClick={() => setActiveSection("examiners")}
-          >
-            <Users size={18} />
-            <span>Quản lý giám khảo</span>
-          </button>
+          {!isExaminer && (
+            <>
+              <button
+                className={`nav-item ${
+                  activeSection === "subjects" ? "active" : ""
+                }`}
+                onClick={() => setActiveSection("subjects")}
+              >
+                <BookOpen size={18} />
+                <span>Quản lý môn học</span>
+              </button>
+              <button
+                className={`nav-item ${
+                  activeSection === "semesters" ? "active" : ""
+                }`}
+                onClick={() => setActiveSection("semesters")}
+              >
+                <Calendar size={18} />
+                <span>Quản lý học kỳ</span>
+              </button>
+              <button
+                className={`nav-item ${
+                  activeSection === "examiners" ? "active" : ""
+                }`}
+                onClick={() => setActiveSection("examiners")}
+              >
+                <Users size={18} />
+                <span>Quản lý giám khảo</span>
+              </button>
+            </>
+          )}
           <button
             className={`nav-item ${activeSection === "exams" ? "active" : ""}`}
             onClick={() => setActiveSection("exams")}
           >
             <FileText size={18} />
-            <span>Quản lý bài thi</span>
+            <span>Quản lý môn thi</span>
           </button>
           <button
             className={`nav-item ${
@@ -497,7 +652,7 @@ const ManagementPage = () => {
                 {activeSection === "subjects" && "Quản lý môn học"}
                 {activeSection === "semesters" && "Quản lý học kỳ"}
                 {activeSection === "examiners" && "Quản lý giám khảo"}
-                {activeSection === "exams" && "Quản lý bài thi"}
+                {activeSection === "exams" && "Quản lý môn thi"}
                 {activeSection === "submissions" && "Quản lý bài nộp"}
               </h1>
               <p className="subtitle">
@@ -514,7 +669,7 @@ const ManagementPage = () => {
               </p>
             </div>
           </div>
-          {isAdmin && (
+          {isAdmin && activeSection !== "submissions" && (
             <button className="btn-add" onClick={handleAdd}>
               <Plus size={18} />
               <span>Thêm mới</span>
@@ -631,11 +786,8 @@ const ManagementPage = () => {
                     {activeSection === "submissions" && (
                       <>
                         <th>MÃ SINH VIÊN</th>
-                        <th>FILE</th>
-                        <th>TRẠNG THÁI</th>
                         <th>ĐIỂM</th>
-                        <th>GIÁM KHẢO</th>
-                        <th>VI PHẠM</th>
+                        <th>NGƯỜI CHẤM</th>
                       </>
                     )}
                     <th>THAO TÁC</th>
@@ -650,19 +802,7 @@ const ManagementPage = () => {
                           <span className="badge badge-code">{item.code}</span>
                         </td>
                         <td>{item.name}</td>
-                        <td>
-                          <button
-                            className="btn-icon btn-edit"
-                            onClick={() => handleEdit(item)}
-                            style={{
-                              backgroundColor: "#93c5fd",
-                              color: "white",
-                              borderRadius: "8px",
-                            }}
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                        </td>
+                        <td>-</td>
                       </tr>
                     ))}
                   {activeSection === "semesters" &&
@@ -674,19 +814,7 @@ const ManagementPage = () => {
                         </td>
                         <td>{formatDate(item.startDate)}</td>
                         <td>{formatDate(item.endDate)}</td>
-                        <td>
-                          <button
-                            className="btn-icon btn-edit"
-                            onClick={() => handleEdit(item)}
-                            style={{
-                              backgroundColor: "#93c5fd",
-                              color: "white",
-                              borderRadius: "8px",
-                            }}
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                        </td>
+                        <td>-</td>
                       </tr>
                     ))}
                   {activeSection === "examiners" &&
@@ -702,19 +830,7 @@ const ManagementPage = () => {
                           </div>
                         </td>
                         <td>{item.email}</td>
-                        <td>
-                          <button
-                            className="btn-icon btn-edit"
-                            onClick={() => handleEdit(item)}
-                            style={{
-                              backgroundColor: "#93c5fd",
-                              color: "white",
-                              borderRadius: "8px",
-                            }}
-                          >
-                            <Edit2 size={16} />
-                          </button>
-                        </td>
+                        <td>-</td>
                       </tr>
                     ))}
                   {activeSection === "exams" &&
@@ -733,28 +849,41 @@ const ManagementPage = () => {
                         <td>{formatDateTime(item.startTime)}</td>
                         <td>{formatDateTime(item.endTime)}</td>
                         <td>
-                          <button
-                            className="btn-icon"
-                            onClick={() => handleViewRubrics(item)}
-                            style={{
-                              backgroundColor: "#6ee7b7",
-                              color: "white",
-                              borderRadius: "8px",
-                            }}
-                          >
-                            <Eye size={16} />
-                          </button>
-                          <button
-                            className="btn-icon btn-edit"
-                            onClick={() => handleEdit(item)}
-                            style={{
-                              backgroundColor: "#93c5fd",
-                              color: "white",
-                              borderRadius: "8px",
-                            }}
-                          >
-                            <Edit2 size={16} />
-                          </button>
+                          {examRubrics[item.id]?.length > 0 ? (
+                            <button
+                              onClick={() => handleViewRubrics(item)}
+                              style={{
+                                backgroundColor: "#10b981",
+                                color: "white",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              Xem tiêu chí
+                            </button>
+                          ) : isAdmin ? (
+                            <button
+                              onClick={() => handleCreateRubric(item)}
+                              style={{
+                                backgroundColor: "#f59e0b",
+                                color: "white",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              Thêm tiêu chí
+                            </button>
+                          ) : (
+                            <span style={{ color: "#999" }}>-</span>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -763,36 +892,7 @@ const ManagementPage = () => {
                       <tr key={item.id}>
                         <td>#{index + 1}</td>
                         <td>
-                          <strong>{item.studentCode}</strong>
-                        </td>
-                        <td>
-                          <a
-                            href={item.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ color: "#1890ff" }}
-                          >
-                            {item.fileUrl}
-                          </a>
-                        </td>
-                        <td>
-                          <span
-                            className="badge"
-                            style={{
-                              backgroundColor:
-                                item.status === "GRADED"
-                                  ? "#10b981"
-                                  : item.status === "UPLOADED"
-                                  ? "#f59e0b"
-                                  : "#6b7280",
-                              color: "white",
-                              padding: "4px 12px",
-                              borderRadius: "4px",
-                              fontSize: "12px",
-                            }}
-                          >
-                            {item.status}
-                          </span>
+                          <strong>{item.studentCode || "-"}</strong>
                         </td>
                         <td>
                           <strong
@@ -805,53 +905,57 @@ const ManagementPage = () => {
                         </td>
                         <td>{item.examinerName || "-"}</td>
                         <td>
-                          {hasViolation(item.id) ? (
-                            <button
-                              onClick={() => handleViewViolations(item.id)}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: "6px",
-                                color: "#ef4444",
-                                fontWeight: "600",
-                                background: "none",
-                                border: "none",
-                                cursor: "pointer",
-                                padding: "4px",
-                              }}
-                            >
-                              <AlertCircle size={18} />
-                              <span>{getViolationCount(item.id)}</span>
-                            </button>
-                          ) : (
-                            <span style={{ color: "#999" }}>-</span>
-                          )}
-                        </td>
-                        <td>
                           <button
-                            className="btn-icon btn-edit"
-                            onClick={() => handleEdit(item)}
+                            onClick={() =>
+                              handleViewSubmissionDetail(item.submissionId)
+                            }
                             style={{
-                              backgroundColor: "#93c5fd",
+                              backgroundColor: "#10b981",
                               color: "white",
-                              borderRadius: "8px",
+                              borderRadius: "6px",
+                              padding: "6px 12px",
+                              border: "none",
+                              cursor: "pointer",
+                              fontSize: "13px",
+                              fontWeight: "500",
                             }}
                           >
-                            <Edit2 size={16} />
+                            Chi tiết
                           </button>
+                          {isExaminer && (
+                            <button
+                              onClick={() => handleGradeSubmission(item)}
+                              style={{
+                                backgroundColor: "#f59e0b",
+                                color: "white",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "500",
+                                marginLeft: "8px",
+                              }}
+                            >
+                              Chấm điểm
+                            </button>
+                          )}
                           {isManager && (
                             <button
-                              className="btn-icon"
                               onClick={() => handleAssignExaminer(item)}
                               style={{
                                 backgroundColor: "#a78bfa",
                                 color: "white",
-                                borderRadius: "8px",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "500",
                                 marginLeft: "8px",
                               }}
-                              title="Phân công giám khảo"
                             >
-                              <UserCheck size={16} />
+                              Phân công
                             </button>
                           )}
                         </td>
@@ -1051,36 +1155,8 @@ const ManagementPage = () => {
                   }))}
                 />
               </Form.Item>
-              <Form.Item
-                label="Mã sinh viên"
-                name="studentCode"
-                rules={[
-                  { required: true, message: "Vui lòng nhập mã sinh viên!" },
-                ]}
-              >
-                <Input placeholder="VD: S001" />
-              </Form.Item>
-              <Form.Item
-                label="File URL"
-                name="fileUrl"
-                rules={[{ required: true, message: "Vui lòng nhập file URL!" }]}
-              >
-                <Input placeholder="VD: file1.pdf" />
-              </Form.Item>
-              <Form.Item
-                label="Trạng thái"
-                name="status"
-                rules={[
-                  { required: true, message: "Vui lòng chọn trạng thái!" },
-                ]}
-              >
-                <Select
-                  placeholder="Chọn trạng thái"
-                  options={[
-                    { label: "UPLOADED", value: "UPLOADED" },
-                    { label: "GRADED", value: "GRADED" },
-                  ]}
-                />
+              <Form.Item label="Mã sinh viên" name="studentCode">
+                <Input placeholder="VD: andntse184673" />
               </Form.Item>
               <Form.Item label="Điểm" name="totalScore">
                 <Input type="number" placeholder="VD: 85.5" />
@@ -1280,17 +1356,30 @@ const ManagementPage = () => {
                     {violation.type}
                   </span>
                 </div>
-                <div style={{ marginBottom: "8px" }}>
+                <div
+                  style={{
+                    marginBottom: "8px",
+                    maxHeight: "200px",
+                    overflowY: "auto",
+                    backgroundColor: "#f9fafb",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    border: "1px solid #e5e7eb",
+                  }}
+                >
                   <strong>Mô tả:</strong>{" "}
-                  <span style={{ color: "#666" }}>{violation.description}</span>
-                </div>
-                <div style={{ marginBottom: "8px" }}>
-                  <strong>Mã sinh viên:</strong>{" "}
-                  <span style={{ color: "#666" }}>{violation.studentCode}</span>
-                </div>
-                <div style={{ marginBottom: "8px" }}>
-                  <strong>Bài thi:</strong>{" "}
-                  <span style={{ color: "#666" }}>{violation.examTitle}</span>
+                  <pre
+                    style={{
+                      color: "#666",
+                      whiteSpace: "pre-wrap",
+                      wordWrap: "break-word",
+                      margin: "8px 0 0 0",
+                      fontFamily: "monospace",
+                      fontSize: "12px",
+                    }}
+                  >
+                    {violation.description}
+                  </pre>
                 </div>
                 <div>
                   <strong>Đã xác minh:</strong>{" "}
@@ -1318,6 +1407,253 @@ const ManagementPage = () => {
         )}
       </Modal>
 
+      {/* Submission Detail Modal */}
+      <Modal
+        title="Chi tiết bài nộp"
+        open={isSubmissionDetailModalOpen}
+        onCancel={() => {
+          setIsSubmissionDetailModalOpen(false);
+          setSelectedSubmissionDetail(null);
+          setCurrentSubmissionId(null);
+        }}
+        footer={
+          selectedSubmissionDetail
+            ? [
+                <button
+                  key="download"
+                  onClick={() => handleDownloadSubmission(currentSubmissionId)}
+                  style={{
+                    backgroundColor: "#10b981",
+                    color: "white",
+                    borderRadius: "6px",
+                    padding: "8px 16px",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                  }}
+                >
+                  Tải xuống bài nộp
+                </button>,
+                <button
+                  key="close"
+                  onClick={() => {
+                    setIsSubmissionDetailModalOpen(false);
+                    setSelectedSubmissionDetail(null);
+                    setCurrentSubmissionId(null);
+                  }}
+                  style={{
+                    backgroundColor: "#6b7280",
+                    color: "white",
+                    borderRadius: "6px",
+                    padding: "8px 16px",
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: "14px",
+                    fontWeight: "500",
+                    marginLeft: "8px",
+                  }}
+                >
+                  Đóng
+                </button>,
+              ]
+            : null
+        }
+        width={700}
+        centered
+      >
+        {loadingSubmissionDetail ? (
+          <div
+            className="loading"
+            style={{ textAlign: "center", padding: "40px" }}
+          >
+            <Spin size="large" />
+          </div>
+        ) : selectedSubmissionDetail ? (
+          <div>
+            <div
+              style={{
+                display: "grid",
+                gap: "16px",
+                padding: "16px",
+                backgroundColor: "#f9fafb",
+                borderRadius: "8px",
+              }}
+            >
+              <div>
+                <strong style={{ color: "#374151" }}>Submission ID:</strong>
+                <div
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: "13px",
+                    color: "#6b7280",
+                    marginTop: "4px",
+                    wordBreak: "break-all",
+                  }}
+                >
+                  {selectedSubmissionDetail.id}
+                </div>
+              </div>
+
+              <div>
+                <strong style={{ color: "#374151" }}>Mã sinh viên:</strong>
+                <div style={{ marginTop: "4px", color: "#1f2937" }}>
+                  {selectedSubmissionDetail.studentId || "-"}
+                </div>
+              </div>
+
+              <div>
+                <strong style={{ color: "#374151" }}>Trạng thái:</strong>
+                <div style={{ marginTop: "4px" }}>
+                  <span
+                    style={{
+                      backgroundColor: selectedSubmissionDetail.isValid
+                        ? "#dcfce7"
+                        : "#fee2e2",
+                      color: selectedSubmissionDetail.isValid
+                        ? "#15803d"
+                        : "#991b1b",
+                      padding: "4px 12px",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    {selectedSubmissionDetail.status}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <strong style={{ color: "#374151" }}>Ghi chú:</strong>
+                <div
+                  style={{
+                    marginTop: "4px",
+                    color: "#6b7280",
+                    backgroundColor: "#fff",
+                    padding: "8px",
+                    borderRadius: "4px",
+                    border: "1px solid #e5e7eb",
+                  }}
+                >
+                  {selectedSubmissionDetail.note || "-"}
+                </div>
+              </div>
+
+              <div>
+                <strong style={{ color: "#374151" }}>Thời gian nộp:</strong>
+                <div style={{ marginTop: "4px", color: "#6b7280" }}>
+                  {new Date(selectedSubmissionDetail.uploadAt).toLocaleString(
+                    "vi-VN",
+                    {
+                      year: "numeric",
+                      month: "2-digit",
+                      day: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    }
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", padding: "20px", color: "#999" }}>
+            Không thể tải chi tiết bài nộp
+          </div>
+        )}
+      </Modal>
+
+      {/* Grade Modal */}
+      <Modal
+        title="Chấm điểm bài nộp"
+        open={isGradeModalOpen}
+        onCancel={() => {
+          setIsGradeModalOpen(false);
+          setGradingSubmission(null);
+          gradeForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+        centered
+      >
+        {gradingSubmission && (
+          <div>
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "12px",
+                backgroundColor: "#f0f9ff",
+                borderRadius: "8px",
+              }}
+            >
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Mã sinh viên:</strong>{" "}
+                {gradingSubmission.studentCode || "-"}
+              </p>
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Điểm hiện tại:</strong>{" "}
+                {gradingSubmission.totalScore !== null
+                  ? gradingSubmission.totalScore
+                  : "Chưa chấm"}
+              </p>
+            </div>
+            <Form
+              form={gradeForm}
+              layout="vertical"
+              onFinish={handleGradeSubmit}
+            >
+              <Form.Item
+                label="Điểm số"
+                name="totalScore"
+                rules={[
+                  {
+                    required: true,
+                    message: "Vui lòng nhập điểm số!",
+                  },
+                  {
+                    type: "number",
+                    min: 0,
+                    max: 10,
+                    message: "Điểm phải từ 0 đến 10!",
+                    transform: (value) => Number(value),
+                  },
+                ]}
+              >
+                <Input
+                  type="number"
+                  placeholder="Nhập điểm (0-10)"
+                  min={0}
+                  max={10}
+                  step={0.1}
+                />
+              </Form.Item>
+              <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
+                <Button
+                  onClick={() => {
+                    setIsGradeModalOpen(false);
+                    setGradingSubmission(null);
+                    gradeForm.resetFields();
+                  }}
+                  style={{ marginRight: "8px" }}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={grading}
+                  style={{ backgroundColor: "#f59e0b" }}
+                >
+                  Chấm điểm
+                </Button>
+              </Form.Item>
+            </Form>
+          </div>
+        )}
+      </Modal>
+
       {/* Assign Examiner Modal */}
       <Modal
         title="Phân công giám khảo"
@@ -1334,18 +1670,20 @@ const ManagementPage = () => {
           <div>
             <div style={{ marginBottom: "20px" }}>
               <p style={{ marginBottom: "8px" }}>
-                <strong>Mã sinh viên:</strong> {assigningSubmission.studentCode}
+                <strong>Mã sinh viên:</strong>{" "}
+                {assigningSubmission.studentCode || "-"}
               </p>
               <p style={{ marginBottom: "8px" }}>
-                <strong>File:</strong>{" "}
-                <a
-                  href={assigningSubmission.fileUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  style={{ color: "#1890ff" }}
+                <strong>Submission ID:</strong>{" "}
+                <span
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: "12px",
+                    color: "#6b7280",
+                  }}
                 >
-                  {assigningSubmission.fileUrl}
-                </a>
+                  {assigningSubmission.submissionId}
+                </span>
               </p>
               <p style={{ marginBottom: "8px" }}>
                 <strong>Giám khảo hiện tại:</strong>{" "}
@@ -1390,6 +1728,254 @@ const ManagementPage = () => {
                 >
                   Phân công
                 </Button>
+              </Form.Item>
+            </Form>
+          </div>
+        )}
+      </Modal>
+
+      {/* Grade Modal */}
+      <Modal
+        title="Chấm điểm bài nộp"
+        open={isGradeModalOpen}
+        onCancel={() => {
+          setIsGradeModalOpen(false);
+          setGradingSubmission(null);
+          gradeForm.resetFields();
+        }}
+        footer={null}
+        width={500}
+        centered
+      >
+        {gradingSubmission && (
+          <div>
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "12px",
+                backgroundColor: "#f0f9ff",
+                borderRadius: "8px",
+              }}
+            >
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Mã sinh viên:</strong>{" "}
+                {gradingSubmission.studentCode || "-"}
+              </p>
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Điểm hiện tại:</strong>{" "}
+                {gradingSubmission.totalScore !== null
+                  ? gradingSubmission.totalScore
+                  : "Chưa chấm"}
+              </p>
+            </div>
+            <Form
+              form={gradeForm}
+              layout="vertical"
+              onFinish={handleGradeSubmit}
+            >
+              <Form.Item
+                label="Điểm số"
+                name="totalScore"
+                rules={[
+                  {
+                    required: true,
+                    message: "Vui lòng nhập điểm số!",
+                  },
+                  {
+                    type: "number",
+                    min: 0,
+                    max: 100,
+                    message: "Điểm phải từ 0 đến 100!",
+                    transform: (value) => Number(value),
+                  },
+                ]}
+              >
+                <Input
+                  type="number"
+                  placeholder="Nhập điểm (0-100)"
+                  min={0}
+                  max={100}
+                  step={0.1}
+                />
+              </Form.Item>
+              <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
+                <Button
+                  onClick={() => {
+                    setIsGradeModalOpen(false);
+                    setGradingSubmission(null);
+                    gradeForm.resetFields();
+                  }}
+                  style={{ marginRight: "8px" }}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={grading}
+                  style={{ backgroundColor: "#f59e0b" }}
+                >
+                  Chấm điểm
+                </Button>
+              </Form.Item>
+            </Form>
+          </div>
+        )}
+      </Modal>
+
+      {/* Create Rubric Modal */}
+      <Modal
+        title="Thêm tiêu chí chấm điểm"
+        open={isCreateRubricModalOpen}
+        onCancel={() => {
+          setIsCreateRubricModalOpen(false);
+          setCreatingRubricExam(null);
+          createRubricForm.resetFields();
+        }}
+        footer={null}
+        width={700}
+        centered
+      >
+        {creatingRubricExam && (
+          <div>
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "12px",
+                backgroundColor: "#f0f9ff",
+                borderRadius: "8px",
+              }}
+            >
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Bài thi:</strong> {creatingRubricExam.title}
+              </p>
+              <p style={{ marginBottom: "4px", color: "#666" }}>
+                <strong>Môn học:</strong> {creatingRubricExam.subjectCode} -{" "}
+                {creatingRubricExam.subjectName}
+              </p>
+            </div>
+            <Form
+              form={createRubricForm}
+              layout="vertical"
+              onFinish={handleCreateRubricSubmit}
+            >
+              <Form.Item
+                label="Tên tiêu chí chấm điểm"
+                name="name"
+                rules={[
+                  {
+                    required: true,
+                    message: "Vui lòng nhập tên tiêu chí chấm điểm!",
+                  },
+                ]}
+              >
+                <Input placeholder="VD: Tiêu chí chấm điểm Midterm Exam" />
+              </Form.Item>
+
+              <Form.List name="rubricCriteria">
+                {(fields, { add, remove }) => (
+                  <>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        marginBottom: "12px",
+                      }}
+                    >
+                      <label style={{ fontWeight: "600", fontSize: "14px" }}>
+                        Các tiêu chí
+                      </label>
+                      <Button
+                        type="dashed"
+                        onClick={() => add()}
+                        icon={<Plus size={16} />}
+                        style={{ color: "#1890ff" }}
+                      >
+                        Thêm tiêu chí
+                      </Button>
+                    </div>
+                    {fields.map(({ key, name, ...restField }, index) => (
+                      <div
+                        key={key}
+                        style={{
+                          display: "flex",
+                          gap: "12px",
+                          marginBottom: "16px",
+                          padding: "12px",
+                          backgroundColor: "#fafafa",
+                          borderRadius: "8px",
+                          alignItems: "flex-start",
+                        }}
+                      >
+                        <div style={{ fontWeight: "600", paddingTop: "8px" }}>
+                          #{index + 1}
+                        </div>
+                        <Form.Item
+                          {...restField}
+                          name={[name, "criterionName"]}
+                          rules={[
+                            {
+                              required: true,
+                              message: "Vui lòng nhập tên tiêu chí!",
+                            },
+                          ]}
+                          style={{ flex: 1, marginBottom: 0 }}
+                        >
+                          <Input placeholder="Tên tiêu chí" />
+                        </Form.Item>
+                        <Form.Item
+                          {...restField}
+                          name={[name, "maxScore"]}
+                          rules={[
+                            {
+                              required: true,
+                              message: "Vui lòng nhập điểm tối đa!",
+                            },
+                          ]}
+                          style={{ width: "120px", marginBottom: 0 }}
+                        >
+                          <Input
+                            type="number"
+                            placeholder="Điểm tối đa"
+                            min={0}
+                          />
+                        </Form.Item>
+                        <Button
+                          danger
+                          onClick={() => remove(name)}
+                          icon={<AlertCircle size={16} />}
+                          style={{ marginTop: "4px" }}
+                        >
+                          Xóa
+                        </Button>
+                      </div>
+                    ))}
+                  </>
+                )}
+              </Form.List>
+
+              <Form.Item style={{ marginBottom: 0, marginTop: "20px" }}>
+                <div style={{ textAlign: "right" }}>
+                  <Button
+                    onClick={() => {
+                      setIsCreateRubricModalOpen(false);
+                      setCreatingRubricExam(null);
+                      createRubricForm.resetFields();
+                    }}
+                    style={{ marginRight: "8px" }}
+                  >
+                    Hủy
+                  </Button>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    loading={creatingRubric}
+                    style={{ backgroundColor: "#10b981" }}
+                  >
+                    Tạo tiêu chí
+                  </Button>
+                </div>
               </Form.Item>
             </Form>
           </div>

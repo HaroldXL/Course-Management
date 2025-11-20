@@ -39,6 +39,12 @@ const submissionService = {
     return response.data;
   },
 
+  // Grade a submission
+  gradeSubmission: async (id, totalScore) => {
+    const response = await api.patch(`/submissions/${id}/grade`, { totalScore });
+    return response.data;
+  },
+
   // Delete a submission
   delete: async (id) => {
     const response = await api.delete(`/submissions/${id}`);
