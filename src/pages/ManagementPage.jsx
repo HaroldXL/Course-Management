@@ -1,5 +1,15 @@
 import { useState, useEffect } from "react";
-import { Modal, Form, Input, DatePicker, Select, message, Spin } from "antd";
+import {
+  Modal,
+  Form,
+  Input,
+  DatePicker,
+  Select,
+  message,
+  Spin,
+  Button,
+} from "antd";
+import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
 import {
   BookOpen,
@@ -10,6 +20,9 @@ import {
   FileText,
   Eye,
   ClipboardList,
+  AlertCircle,
+  LogOut,
+  UserCheck,
 } from "lucide-react";
 import subjectService from "../services/subjectService";
 import semesterService from "../services/semesterService";
@@ -17,20 +30,30 @@ import examinerService from "../services/examinerService";
 import examService from "../services/examService";
 import rubricService from "../services/rubricService";
 import submissionService from "../services/submissionService";
+import violationService from "../services/violationService";
+import authService from "../services/authService";
 import "./ManagementPage.css";
 
 const ManagementPage = () => {
+  const navigate = useNavigate();
   const [activeSection, setActiveSection] = useState("subjects");
   const [subjects, setSubjects] = useState([]);
   const [semesters, setSemesters] = useState([]);
   const [examiners, setExaminers] = useState([]);
   const [exams, setExams] = useState([]);
   const [submissions, setSubmissions] = useState([]);
+  const [violations, setViolations] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [filterSemesterId, setFilterSemesterId] = useState(null);
   const [filterSubjectId, setFilterSubjectId] = useState(null);
   const [filterExamId, setFilterExamId] = useState(null);
+
+  // Get user role
+  const currentUser = authService.getCurrentUser();
+  const userRole = currentUser?.role || "";
+  const isAdmin = userRole === "Admin";
+  const isManager = userRole === "Manager";
 
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -38,10 +61,21 @@ const ManagementPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
+  // Assign examiner modal states
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [assigningSubmission, setAssigningSubmission] = useState(null);
+  const [assigningExaminer, setAssigningExaminer] = useState(false);
+
   // Rubric modal states
   const [isRubricModalOpen, setIsRubricModalOpen] = useState(false);
   const [selectedExamRubrics, setSelectedExamRubrics] = useState([]);
   const [loadingRubrics, setLoadingRubrics] = useState(false);
+
+  // Violation modal states
+  const [isViolationModalOpen, setIsViolationModalOpen] = useState(false);
+  const [selectedSubmissionViolations, setSelectedSubmissionViolations] =
+    useState([]);
+  const [loadingViolations, setLoadingViolations] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -86,10 +120,12 @@ const ManagementPage = () => {
         }
       } else if (activeSection === "submissions") {
         // Load submissions and also exams/examiners for the dropdowns
-        const [examsResponse, examinersResponse] = await Promise.all([
-          examService.getAll(),
-          examinerService.getAll(),
-        ]);
+        const [examsResponse, examinersResponse, violationsResponse] =
+          await Promise.all([
+            examService.getAll(),
+            examinerService.getAll(),
+            violationService.getAll(),
+          ]);
         if (filterExamId) {
           const submissionsResponse = await submissionService.getByExamId(
             filterExamId
@@ -106,6 +142,9 @@ const ManagementPage = () => {
         if (examinersResponse.isSuccess) {
           setExaminers(examinersResponse.data);
         }
+        if (violationsResponse.isSuccess) {
+          setViolations(violationsResponse.data);
+        }
       }
     } catch (err) {
       setError(err.message);
@@ -120,6 +159,59 @@ const ManagementPage = () => {
       month: "2-digit",
       day: "2-digit",
     });
+  };
+
+  const hasViolation = (submissionId) => {
+    return violations.some((v) => v.submissionId === submissionId);
+  };
+
+  const getViolationCount = (submissionId) => {
+    return violations.filter((v) => v.submissionId === submissionId).length;
+  };
+
+  const handleViewViolations = (submissionId) => {
+    const submissionViolations = violations.filter(
+      (v) => v.submissionId === submissionId
+    );
+    setSelectedSubmissionViolations(submissionViolations);
+    setIsViolationModalOpen(true);
+  };
+
+  const handleLogout = () => {
+    authService.logout();
+    message.success("Đăng xuất thành công!");
+    navigate("/login");
+  };
+
+  const handleAssignExaminer = (submission) => {
+    setAssigningSubmission(submission);
+    setIsAssignModalOpen(true);
+  };
+
+  const handleAssignSubmit = async (examinerId) => {
+    if (!assigningSubmission || !examinerId) return;
+
+    setAssigningExaminer(true);
+    try {
+      const response = await submissionService.assignExaminer(
+        assigningSubmission.id,
+        examinerId
+      );
+
+      if (response.isSuccess) {
+        message.success("Phân công giám khảo thành công!");
+        setIsAssignModalOpen(false);
+        setAssigningSubmission(null);
+        loadData();
+      } else {
+        message.error(response.message || "Phân công giám khảo thất bại!");
+      }
+    } catch (error) {
+      console.error("Assign examiner error:", error);
+      message.error("Có lỗi xảy ra khi phân công giám khảo!");
+    } finally {
+      setAssigningExaminer(false);
+    }
   };
 
   const formatDateTime = (dateString) => {
@@ -380,6 +472,12 @@ const ManagementPage = () => {
             <span>Quản lý bài nộp</span>
           </button>
         </nav>
+        <div className="sidebar-footer">
+          <button className="logout-btn" onClick={handleLogout}>
+            <LogOut size={18} />
+            <span>Đăng xuất</span>
+          </button>
+        </div>
       </div>
 
       {/* Main Content */}
@@ -416,10 +514,12 @@ const ManagementPage = () => {
               </p>
             </div>
           </div>
-          <button className="btn-add" onClick={handleAdd}>
-            <Plus size={18} />
-            <span>Thêm mới</span>
-          </button>
+          {isAdmin && (
+            <button className="btn-add" onClick={handleAdd}>
+              <Plus size={18} />
+              <span>Thêm mới</span>
+            </button>
+          )}
         </div>
 
         {/* Filter Bar for Exams */}
@@ -535,6 +635,7 @@ const ManagementPage = () => {
                         <th>TRẠNG THÁI</th>
                         <th>ĐIỂM</th>
                         <th>GIÁM KHẢO</th>
+                        <th>VI PHẠM</th>
                       </>
                     )}
                     <th>THAO TÁC</th>
@@ -704,6 +805,29 @@ const ManagementPage = () => {
                         </td>
                         <td>{item.examinerName || "-"}</td>
                         <td>
+                          {hasViolation(item.id) ? (
+                            <button
+                              onClick={() => handleViewViolations(item.id)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "6px",
+                                color: "#ef4444",
+                                fontWeight: "600",
+                                background: "none",
+                                border: "none",
+                                cursor: "pointer",
+                                padding: "4px",
+                              }}
+                            >
+                              <AlertCircle size={18} />
+                              <span>{getViolationCount(item.id)}</span>
+                            </button>
+                          ) : (
+                            <span style={{ color: "#999" }}>-</span>
+                          )}
+                        </td>
+                        <td>
                           <button
                             className="btn-icon btn-edit"
                             onClick={() => handleEdit(item)}
@@ -715,6 +839,21 @@ const ManagementPage = () => {
                           >
                             <Edit2 size={16} />
                           </button>
+                          {isManager && (
+                            <button
+                              className="btn-icon"
+                              onClick={() => handleAssignExaminer(item)}
+                              style={{
+                                backgroundColor: "#a78bfa",
+                                color: "white",
+                                borderRadius: "8px",
+                                marginLeft: "8px",
+                              }}
+                              title="Phân công giám khảo"
+                            >
+                              <UserCheck size={16} />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -1084,6 +1223,175 @@ const ManagementPage = () => {
         ) : (
           <div style={{ textAlign: "center", padding: "20px", color: "#999" }}>
             Không có đánh giá nào cho bài thi này
+          </div>
+        )}
+      </Modal>
+
+      {/* Violation Modal */}
+      <Modal
+        title="Vi phạm của bài nộp"
+        open={isViolationModalOpen}
+        onCancel={() => setIsViolationModalOpen(false)}
+        footer={null}
+        width={800}
+        centered
+      >
+        {loadingViolations ? (
+          <div className="loading">
+            <Spin size="large" />
+          </div>
+        ) : selectedSubmissionViolations.length > 0 ? (
+          <div>
+            {selectedSubmissionViolations.map((violation, index) => (
+              <div
+                key={violation.id}
+                style={{
+                  marginBottom: "20px",
+                  padding: "16px",
+                  border: "1px solid #fecaca",
+                  borderRadius: "8px",
+                  backgroundColor: "#fef2f2",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "8px",
+                    marginBottom: "12px",
+                  }}
+                >
+                  <AlertCircle size={20} color="#ef4444" />
+                  <h3 style={{ margin: 0, color: "#dc2626" }}>
+                    Vi phạm #{index + 1}
+                  </h3>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Loại vi phạm:</strong>{" "}
+                  <span
+                    style={{
+                      backgroundColor: "#fee2e2",
+                      color: "#991b1b",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                    }}
+                  >
+                    {violation.type}
+                  </span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Mô tả:</strong>{" "}
+                  <span style={{ color: "#666" }}>{violation.description}</span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Mã sinh viên:</strong>{" "}
+                  <span style={{ color: "#666" }}>{violation.studentCode}</span>
+                </div>
+                <div style={{ marginBottom: "8px" }}>
+                  <strong>Bài thi:</strong>{" "}
+                  <span style={{ color: "#666" }}>{violation.examTitle}</span>
+                </div>
+                <div>
+                  <strong>Đã xác minh:</strong>{" "}
+                  <span
+                    style={{
+                      backgroundColor: violation.verified
+                        ? "#dcfce7"
+                        : "#fef3c7",
+                      color: violation.verified ? "#15803d" : "#a16207",
+                      padding: "2px 8px",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                    }}
+                  >
+                    {violation.verified ? "Có" : "Chưa"}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div style={{ textAlign: "center", padding: "20px", color: "#999" }}>
+            Không có vi phạm nào cho bài nộp này
+          </div>
+        )}
+      </Modal>
+
+      {/* Assign Examiner Modal */}
+      <Modal
+        title="Phân công giám khảo"
+        open={isAssignModalOpen}
+        onCancel={() => {
+          setIsAssignModalOpen(false);
+          setAssigningSubmission(null);
+        }}
+        footer={null}
+        width={500}
+        centered
+      >
+        {assigningSubmission && (
+          <div>
+            <div style={{ marginBottom: "20px" }}>
+              <p style={{ marginBottom: "8px" }}>
+                <strong>Mã sinh viên:</strong> {assigningSubmission.studentCode}
+              </p>
+              <p style={{ marginBottom: "8px" }}>
+                <strong>File:</strong>{" "}
+                <a
+                  href={assigningSubmission.fileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: "#1890ff" }}
+                >
+                  {assigningSubmission.fileUrl}
+                </a>
+              </p>
+              <p style={{ marginBottom: "8px" }}>
+                <strong>Giám khảo hiện tại:</strong>{" "}
+                {assigningSubmission.examinerName || "Chưa phân công"}
+              </p>
+            </div>
+            <Form
+              layout="vertical"
+              onFinish={(values) => handleAssignSubmit(values.examinerId)}
+            >
+              <Form.Item
+                label="Chọn giám khảo"
+                name="examinerId"
+                rules={[
+                  { required: true, message: "Vui lòng chọn giám khảo!" },
+                ]}
+              >
+                <Select
+                  placeholder="Chọn giám khảo"
+                  size="large"
+                  options={examiners.map((e) => ({
+                    label: e.fullName,
+                    value: e.id,
+                  }))}
+                />
+              </Form.Item>
+              <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
+                <Button
+                  onClick={() => {
+                    setIsAssignModalOpen(false);
+                    setAssigningSubmission(null);
+                  }}
+                  style={{ marginRight: "8px" }}
+                >
+                  Hủy
+                </Button>
+                <Button
+                  type="primary"
+                  htmlType="submit"
+                  loading={assigningExaminer}
+                  style={{ backgroundColor: "#a78bfa" }}
+                >
+                  Phân công
+                </Button>
+              </Form.Item>
+            </Form>
           </div>
         )}
       </Modal>

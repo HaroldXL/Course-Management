@@ -24,6 +24,8 @@ input:focus-visible {
   background: white;
   padding: 1.5rem 0;
   border-right: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-header {
@@ -40,6 +42,7 @@ input:focus-visible {
 
 .sidebar-nav {
   padding: 1rem 0;
+  flex: 1;
 }
 
 .nav-item {
@@ -74,6 +77,33 @@ input:focus-visible {
   color: #3b82f6;
   border-left-color: #3b82f6;
   font-weight: 500;
+}
+
+.sidebar-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.logout-btn {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font-size: 0.95rem;
+  color: #ef4444;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  border-radius: 8px;
+  outline: none;
+}
+
+.logout-btn:hover {
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 /* Main Content */

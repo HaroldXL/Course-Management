@@ -1,17 +1,17 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8082/api';
+const AUTH_API_BASE_URL = 'http://localhost:8081/api';
 
-// Create axios instance
-const api = axios.create({
-  baseURL: API_BASE_URL,
+// Create axios instance for auth endpoints
+const authApi = axios.create({
+  baseURL: AUTH_API_BASE_URL,
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
 // Request interceptor - Add JWT token to requests
-api.interceptors.request.use(
+authApi.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token');
     if (token) {
@@ -25,7 +25,7 @@ api.interceptors.request.use(
 );
 
 // Response interceptor - Handle errors globally
-api.interceptors.response.use(
+authApi.interceptors.response.use(
   (response) => {
     return response;
   },
@@ -47,5 +47,5 @@ api.interceptors.response.use(
   }
 );
 
-export default api;
-export { API_BASE_URL };
+export default authApi;
+export { AUTH_API_BASE_URL };

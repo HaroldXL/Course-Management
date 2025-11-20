@@ -1,0 +1,65 @@
+.register-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background: #F5F8FA;
+  padding: 20px;
+}
+
+.register-box {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  width: 100%;
+  max-width: 450px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.register-header {
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.register-header h1 {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1890ff;
+  margin-bottom: 8px;
+}
+
+.register-header p {
+  font-size: 15px;
+  color: #666;
+  margin: 0;
+}
+
+.register-footer {
+  text-align: center;
+  margin-top: 20px;
+  font-size: 14px;
+  color: #666;
+}
+
+.register-footer a {
+  color: #1890ff;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.register-footer a:hover {
+  text-decoration: underline;
+}
+
+.ant-input-affix-wrapper,
+.ant-input-password,
+.ant-select-selector {
+  border-radius: 8px;
+}
+
+.ant-form-item {
+  margin-bottom: 18px;
+}

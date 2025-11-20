@@ -33,6 +33,12 @@ const submissionService = {
     return response.data;
   },
 
+  // Assign examiner to submission
+  assignExaminer: async (id, examinerId) => {
+    const response = await api.patch(`/submissions/${id}/assign/${examinerId}`);
+    return response.data;
+  },
+
   // Delete a submission
   delete: async (id) => {
     const response = await api.delete(`/submissions/${id}`);
