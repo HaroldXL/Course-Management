@@ -21,6 +21,12 @@ const submissionService = {
     return response.data;
   },
 
+  // Get submission detail with criterion scores
+  getDetailById: async (id) => {
+    const response = await api.get(`/submissions/${id}/detail`);
+    return response.data;
+  },
+
   // Create a new submission
   create: async (submissionData) => {
     const response = await api.post("/submissions", submissionData);
@@ -39,9 +45,24 @@ const submissionService = {
     return response.data;
   },
 
-  // Grade a submission
+  // Grade submission criteria
+  gradeCriteria: async (submissionId, scores) => {
+    const response = await api.patch(`/submissions/grade-criteria`, {
+      submissionId,
+      scores,
+    });
+    return response.data;
+  },
+
+  // Grade a submission (update total score)
   gradeSubmission: async (id, totalScore) => {
     const response = await api.patch(`/submissions/${id}/grade`, { totalScore });
+    return response.data;
+  },
+
+  // Confirm submission score
+  confirmScore: async (id) => {
+    const response = await api.patch(`/submissions/${id}/confirm`);
     return response.data;
   },
 

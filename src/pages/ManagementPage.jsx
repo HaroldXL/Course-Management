@@ -8,6 +8,7 @@ import {
   message,
   Spin,
   Button,
+  Popconfirm,
 } from "antd";
 import { useNavigate } from "react-router-dom";
 import dayjs from "dayjs";
@@ -100,6 +101,16 @@ const ManagementPage = () => {
   const [gradingSubmission, setGradingSubmission] = useState(null);
   const [grading, setGrading] = useState(false);
   const [gradeForm] = Form.useForm();
+  const [examRubricsForGrading, setExamRubricsForGrading] = useState([]);
+  const [selectedRubricForGrading, setSelectedRubricForGrading] =
+    useState(null);
+  const [loadingRubricsForGrading, setLoadingRubricsForGrading] =
+    useState(false);
+
+  // Score detail modal states
+  const [isScoreDetailModalOpen, setIsScoreDetailModalOpen] = useState(false);
+  const [scoreDetail, setScoreDetail] = useState(null);
+  const [loadingScoreDetail, setLoadingScoreDetail] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -277,38 +288,160 @@ const ManagementPage = () => {
     }
   };
 
-  const handleGradeSubmission = (submission) => {
+  const handleViewScoreDetail = async (submissionId) => {
+    setIsScoreDetailModalOpen(true);
+    setLoadingScoreDetail(true);
+    setScoreDetail(null);
+
+    try {
+      const response = await submissionService.getDetailById(submissionId);
+      if (response.isSuccess && response.data) {
+        setScoreDetail(response.data);
+      } else {
+        message.error("Không thể tải chi tiết điểm!");
+      }
+    } catch (error) {
+      console.error("Load score detail error:", error);
+      message.error("Đã xảy ra lỗi khi tải chi tiết điểm!");
+    } finally {
+      setLoadingScoreDetail(false);
+    }
+  };
+
+  const handleGradeSubmission = async (submission) => {
     setGradingSubmission(submission);
     setIsGradeModalOpen(true);
-    gradeForm.setFieldsValue({
-      totalScore: submission.totalScore || null,
-    });
+    setLoadingRubricsForGrading(true);
+    setExamRubricsForGrading([]);
+    setSelectedRubricForGrading(null);
+    gradeForm.resetFields();
+    // Clear all fields including old totalScore field
+    gradeForm.setFieldsValue({});
+
+    try {
+      // Load rubrics for the exam using filterExamId (current selected exam)
+      const examId = submission.examId || filterExamId;
+      if (!examId) {
+        message.error("Không xác định được môn thi!");
+        setLoadingRubricsForGrading(false);
+        return;
+      }
+
+      console.log("Loading rubrics for exam ID:", examId);
+      const response = await rubricService.getByExamId(examId);
+      console.log("Rubrics response:", response);
+
+      if (response.isSuccess && response.data) {
+        setExamRubricsForGrading(response.data);
+      }
+    } catch (error) {
+      console.error("Load rubrics error:", error);
+      message.error("Đã xảy ra lỗi khi tải tiêu chí chấm điểm!");
+    } finally {
+      setLoadingRubricsForGrading(false);
+    }
   };
 
   const handleGradeSubmit = async (values) => {
-    if (!gradingSubmission) return;
+    console.log("handleGradeSubmit called with values:", values);
+    console.log("gradingSubmission:", gradingSubmission);
+    console.log("selectedRubricForGrading:", selectedRubricForGrading);
+
+    if (!gradingSubmission || !selectedRubricForGrading) {
+      message.error("Vui lòng chọn tiêu chí chấm điểm!");
+      return;
+    }
 
     setGrading(true);
     try {
-      const response = await submissionService.gradeSubmission(
-        gradingSubmission.id,
-        values.totalScore
+      // Prepare scores array from form values
+      const scores = selectedRubricForGrading.rubricCriteria.map(
+        (criterion) => ({
+          criterionId: criterion.id,
+          score: Number(values[`score_${criterion.id}`]) || 0,
+          comment: values[`comment_${criterion.id}`] || "",
+        })
       );
 
-      if (response.isSuccess) {
+      console.log("Grading submission:", gradingSubmission.id);
+      console.log("Scores:", scores);
+
+      // Calculate total score
+      const totalScore = scores.reduce((sum, item) => sum + item.score, 0);
+      console.log("Total score:", totalScore);
+
+      // First, grade by criteria
+      const criteriaResponse = await submissionService.gradeCriteria(
+        gradingSubmission.id,
+        scores
+      );
+
+      if (!criteriaResponse.isSuccess) {
+        message.error(
+          criteriaResponse.message || "Chấm điểm chi tiết thất bại!"
+        );
+        setGrading(false);
+        return;
+      }
+
+      // Then, update total score
+      const totalResponse = await submissionService.gradeSubmission(
+        gradingSubmission.id,
+        totalScore
+      );
+
+      if (totalResponse.isSuccess) {
         message.success("Chấm điểm thành công!");
         setIsGradeModalOpen(false);
         setGradingSubmission(null);
+        setSelectedRubricForGrading(null);
         gradeForm.resetFields();
         loadData();
       } else {
-        message.error(response.message || "Chấm điểm thất bại!");
+        message.error(totalResponse.message || "Chấm điểm thất bại!");
       }
     } catch (error) {
       console.error("Grade submission error:", error);
       message.error("Có lỗi xảy ra khi chấm điểm!");
     } finally {
       setGrading(false);
+    }
+  };
+
+  const getStatusBadgeStyle = (status) => {
+    if (!status) return { backgroundColor: "#f3f4f6", color: "#6b7280" };
+
+    const statusLower = status.toLowerCase();
+    if (statusLower.includes("chờ") || statusLower.includes("xác nhận")) {
+      return { backgroundColor: "#fef3c7", color: "#92400e" }; // Yellow
+    } else if (
+      statusLower.includes("hoàn thành") ||
+      statusLower.includes("đã xác nhận")
+    ) {
+      return { backgroundColor: "#d1fae5", color: "#065f46" }; // Green
+    } else if (
+      statusLower.includes("từ chối") ||
+      statusLower.includes("thất bại")
+    ) {
+      return { backgroundColor: "#fee2e2", color: "#991b1b" }; // Red
+    } else if (statusLower.includes("đang")) {
+      return { backgroundColor: "#dbeafe", color: "#1e40af" }; // Blue
+    }
+    return { backgroundColor: "#f3f4f6", color: "#6b7280" }; // Gray default
+  };
+
+  const handleConfirmScore = async (submission) => {
+    try {
+      const response = await submissionService.confirmScore(submission.id);
+      if (response.isSuccess) {
+        message.success("Xác nhận điểm thành công!");
+        loadData();
+      } else {
+        message.error(response.message || "Xác nhận điểm thất bại!");
+      }
+    } catch (error) {
+      console.error("Confirm score error:", error);
+      message.error("Có lỗi xảy ra khi xác nhận điểm!");
     }
   };
 
@@ -788,6 +921,7 @@ const ManagementPage = () => {
                         <th>MÃ SINH VIÊN</th>
                         <th>ĐIỂM</th>
                         <th>NGƯỜI CHẤM</th>
+                        <th>TRẠNG THÁI</th>
                       </>
                     )}
                     <th>THAO TÁC</th>
@@ -905,6 +1039,23 @@ const ManagementPage = () => {
                         </td>
                         <td>{item.examinerName || "-"}</td>
                         <td>
+                          {item.status ? (
+                            <span
+                              style={{
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                ...getStatusBadgeStyle(item.status),
+                                fontSize: "12px",
+                                fontWeight: "500",
+                              }}
+                            >
+                              {item.status}
+                            </span>
+                          ) : (
+                            <span style={{ color: "#999" }}>-</span>
+                          )}
+                        </td>
+                        <td>
                           <button
                             onClick={() =>
                               handleViewSubmissionDetail(item.submissionId)
@@ -922,6 +1073,24 @@ const ManagementPage = () => {
                           >
                             Chi tiết
                           </button>
+                          {item.totalScore !== null && (
+                            <button
+                              onClick={() => handleViewScoreDetail(item.id)}
+                              style={{
+                                backgroundColor: "#3b82f6",
+                                color: "white",
+                                borderRadius: "6px",
+                                padding: "6px 12px",
+                                border: "none",
+                                cursor: "pointer",
+                                fontSize: "13px",
+                                fontWeight: "500",
+                                marginLeft: "8px",
+                              }}
+                            >
+                              Xem điểm
+                            </button>
+                          )}
                           {isExaminer && (
                             <button
                               onClick={() => handleGradeSubmission(item)}
@@ -958,6 +1127,34 @@ const ManagementPage = () => {
                               Phân công
                             </button>
                           )}
+                          {isAdmin &&
+                            item.status &&
+                            item.totalScore !== null &&
+                            !item.status.includes("Đã xác nhận") && (
+                              <Popconfirm
+                                title="Xác nhận điểm"
+                                description="Bạn có chắc chắn muốn xác nhận điểm cho bài nộp này?"
+                                onConfirm={() => handleConfirmScore(item)}
+                                okText="Xác nhận"
+                                cancelText="Hủy"
+                              >
+                                <button
+                                  style={{
+                                    backgroundColor: "#ea8abaff",
+                                    color: "white",
+                                    borderRadius: "6px",
+                                    padding: "6px 12px",
+                                    border: "none",
+                                    cursor: "pointer",
+                                    fontSize: "13px",
+                                    fontWeight: "500",
+                                    marginLeft: "8px",
+                                  }}
+                                >
+                                  Xác nhận điểm
+                                </button>
+                              </Popconfirm>
+                            )}
                         </td>
                       </tr>
                     ))}
@@ -1572,11 +1769,15 @@ const ManagementPage = () => {
         onCancel={() => {
           setIsGradeModalOpen(false);
           setGradingSubmission(null);
+          setSelectedRubricForGrading(null);
           gradeForm.resetFields();
         }}
         footer={null}
-        width={500}
+        width={700}
         centered
+        destroyOnClose={true}
+        maskClosable={false}
+        closable={false}
       >
         {gradingSubmission && (
           <div>
@@ -1599,59 +1800,406 @@ const ManagementPage = () => {
                   : "Chưa chấm"}
               </p>
             </div>
-            <Form
-              form={gradeForm}
-              layout="vertical"
-              onFinish={handleGradeSubmit}
-            >
-              <Form.Item
-                label="Điểm số"
-                name="totalScore"
-                rules={[
-                  {
-                    required: true,
-                    message: "Vui lòng nhập điểm số!",
-                  },
-                  {
-                    type: "number",
-                    min: 0,
-                    max: 10,
-                    message: "Điểm phải từ 0 đến 10!",
-                    transform: (value) => Number(value),
-                  },
-                ]}
+
+            {loadingRubricsForGrading ? (
+              <div style={{ textAlign: "center", padding: "20px" }}>
+                <Spin size="large" />
+              </div>
+            ) : examRubricsForGrading.length === 0 ? (
+              <div
+                style={{ textAlign: "center", padding: "20px", color: "#999" }}
               >
-                <Input
-                  type="number"
-                  placeholder="Nhập điểm (0-10)"
-                  min={0}
-                  max={10}
-                  step={0.1}
-                />
-              </Form.Item>
-              <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
-                <Button
-                  onClick={() => {
-                    setIsGradeModalOpen(false);
-                    setGradingSubmission(null);
-                    gradeForm.resetFields();
-                  }}
-                  style={{ marginRight: "8px" }}
-                >
-                  Hủy
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={grading}
-                  style={{ backgroundColor: "#f59e0b" }}
-                >
-                  Chấm điểm
-                </Button>
-              </Form.Item>
-            </Form>
+                Môn thi này chưa có tiêu chí chấm điểm
+              </div>
+            ) : (
+              <div>
+                <div style={{ marginBottom: "16px" }}>
+                  <label
+                    style={{
+                      display: "block",
+                      marginBottom: "8px",
+                      fontWeight: "500",
+                    }}
+                  >
+                    Chọn tiêu chí chấm điểm
+                  </label>
+                  <Select
+                    placeholder="Chọn tiêu chí"
+                    value={selectedRubricForGrading?.id}
+                    style={{ width: "100%" }}
+                    onChange={(value) => {
+                      const rubric = examRubricsForGrading.find(
+                        (r) => r.id === value
+                      );
+                      setSelectedRubricForGrading(rubric);
+                      gradeForm.resetFields();
+                      gradeForm.setFieldsValue({});
+                    }}
+                  >
+                    {examRubricsForGrading.map((rubric) => (
+                      <Select.Option key={rubric.id} value={rubric.id}>
+                        {rubric.name}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </div>
+
+                {selectedRubricForGrading && (
+                  <Form
+                    form={gradeForm}
+                    layout="vertical"
+                    onFinish={handleGradeSubmit}
+                    onFinishFailed={(errorInfo) => {
+                      console.log("Form validation failed:", errorInfo);
+                      console.log("Error fields:", errorInfo.errorFields);
+                      errorInfo.errorFields.forEach((field) => {
+                        console.log("Field error:", field.name, field.errors);
+                      });
+                      message.error(
+                        "Vui lòng điền đầy đủ điểm cho tất cả các tiêu chí!"
+                      );
+                    }}
+                  >
+                    <div
+                      style={{
+                        maxHeight: "400px",
+                        overflowY: "auto",
+                        marginBottom: "16px",
+                      }}
+                    >
+                      {selectedRubricForGrading.rubricCriteria.map(
+                        (criterion) => (
+                          <div
+                            key={criterion.id}
+                            style={{
+                              marginBottom: "16px",
+                              padding: "12px",
+                              backgroundColor: "#f9fafb",
+                              borderRadius: "6px",
+                              border: "1px solid #e5e7eb",
+                            }}
+                          >
+                            <div style={{ marginBottom: "8px" }}>
+                              <strong style={{ color: "#374151" }}>
+                                {criterion.criterionName}
+                              </strong>
+                              <span
+                                style={{ color: "#6b7280", marginLeft: "8px" }}
+                              >
+                                (Tối đa: {criterion.maxScore} điểm)
+                              </span>
+                            </div>
+                            <Form.Item
+                              name={`score_${criterion.id}`}
+                              rules={[
+                                {
+                                  required: true,
+                                  message: "Vui lòng nhập điểm!",
+                                },
+                                {
+                                  validator: (_, value) => {
+                                    const numValue = Number(value);
+                                    if (isNaN(numValue)) {
+                                      return Promise.reject(
+                                        "Vui lòng nhập số!"
+                                      );
+                                    }
+                                    if (
+                                      numValue < 0 ||
+                                      numValue > criterion.maxScore
+                                    ) {
+                                      return Promise.reject(
+                                        `Điểm phải từ 0 đến ${criterion.maxScore}!`
+                                      );
+                                    }
+                                    return Promise.resolve();
+                                  },
+                                },
+                              ]}
+                              style={{ marginBottom: "8px" }}
+                            >
+                              <Input
+                                type="number"
+                                placeholder={`Nhập điểm (0-${criterion.maxScore})`}
+                                min={0}
+                                max={criterion.maxScore}
+                                step={0.01}
+                              />
+                            </Form.Item>
+                            <Form.Item
+                              name={`comment_${criterion.id}`}
+                              style={{ marginBottom: 0 }}
+                            >
+                              <Input.TextArea
+                                placeholder="Nhận xét (không bắt buộc)"
+                                rows={2}
+                              />
+                            </Form.Item>
+                          </div>
+                        )
+                      )}
+                    </div>
+
+                    <Form.Item shouldUpdate style={{ marginBottom: "16px" }}>
+                      {() => {
+                        const values = gradeForm.getFieldsValue();
+                        const totalScore =
+                          selectedRubricForGrading.rubricCriteria.reduce(
+                            (sum, criterion) => {
+                              const score =
+                                Number(values[`score_${criterion.id}`]) || 0;
+                              // Round to avoid floating point precision issues
+                              return Math.round((sum + score) * 100) / 100;
+                            },
+                            0
+                          );
+
+                        return (
+                          <div
+                            style={{
+                              padding: "16px",
+                              backgroundColor: "#f0f9ff",
+                              borderRadius: "8px",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                justifyContent: "space-between",
+                                alignItems: "center",
+                              }}
+                            >
+                              <strong
+                                style={{ fontSize: "16px", color: "#1e40af" }}
+                              >
+                                Tổng điểm:
+                              </strong>
+                              <span
+                                style={{
+                                  fontSize: "24px",
+                                  fontWeight: "700",
+                                  color: "#1e40af",
+                                }}
+                              >
+                                {totalScore.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }}
+                    </Form.Item>
+
+                    <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
+                      <Button
+                        onClick={() => {
+                          setIsGradeModalOpen(false);
+                          setGradingSubmission(null);
+                          setSelectedRubricForGrading(null);
+                          gradeForm.resetFields();
+                        }}
+                        style={{ marginRight: "8px" }}
+                      >
+                        Hủy
+                      </Button>
+                      <Button
+                        type="primary"
+                        htmlType="submit"
+                        loading={grading}
+                        style={{ backgroundColor: "#f59e0b" }}
+                      >
+                        Chấm điểm
+                      </Button>
+                    </Form.Item>
+                  </Form>
+                )}
+
+                {/* Always show Cancel button if rubric not selected */}
+                {!selectedRubricForGrading && (
+                  <div style={{ marginTop: "16px", textAlign: "right" }}>
+                    <Button
+                      onClick={() => {
+                        setIsGradeModalOpen(false);
+                        setGradingSubmission(null);
+                        setSelectedRubricForGrading(null);
+                        gradeForm.resetFields();
+                      }}
+                    >
+                      Hủy
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
+      </Modal>
+
+      {/* Score Detail Modal */}
+      <Modal
+        title="Chi tiết điểm"
+        open={isScoreDetailModalOpen}
+        onCancel={() => {
+          setIsScoreDetailModalOpen(false);
+          setScoreDetail(null);
+        }}
+        footer={[
+          <Button
+            key="close"
+            onClick={() => {
+              setIsScoreDetailModalOpen(false);
+              setScoreDetail(null);
+            }}
+          >
+            Đóng
+          </Button>,
+        ]}
+        width={800}
+      >
+        {loadingScoreDetail ? (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <Spin size="large" />
+          </div>
+        ) : scoreDetail ? (
+          <div>
+            <div
+              style={{
+                marginBottom: "20px",
+                padding: "12px",
+                backgroundColor: "#f3f4f6",
+                borderRadius: "6px",
+              }}
+            >
+              <div style={{ marginBottom: "8px" }}>
+                <strong>Mã sinh viên:</strong> {scoreDetail.studentCode}
+              </div>
+              <div style={{ marginBottom: "8px" }}>
+                <strong>Người chấm:</strong> {scoreDetail.examinerName || "-"}
+              </div>
+              <div>
+                <strong>Tổng điểm:</strong>{" "}
+                <span
+                  style={{
+                    fontSize: "18px",
+                    fontWeight: "600",
+                    color: "#10b981",
+                  }}
+                >
+                  {scoreDetail.totalScore}
+                </span>
+              </div>
+            </div>
+
+            {scoreDetail.criterionScores &&
+            scoreDetail.criterionScores.length > 0 ? (
+              <div>
+                <h4 style={{ marginBottom: "12px" }}>
+                  Chi tiết điểm theo tiêu chí:
+                </h4>
+                <table
+                  style={{
+                    width: "100%",
+                    borderCollapse: "collapse",
+                    border: "1px solid #e5e7eb",
+                  }}
+                >
+                  <thead>
+                    <tr style={{ backgroundColor: "#f9fafb" }}>
+                      <th
+                        style={{
+                          padding: "12px",
+                          textAlign: "left",
+                          borderBottom: "2px solid #e5e7eb",
+                          fontWeight: "600",
+                        }}
+                      >
+                        Tiêu chí
+                      </th>
+                      <th
+                        style={{
+                          padding: "12px",
+                          textAlign: "center",
+                          borderBottom: "2px solid #e5e7eb",
+                          fontWeight: "600",
+                          width: "120px",
+                        }}
+                      >
+                        Điểm tối đa
+                      </th>
+                      <th
+                        style={{
+                          padding: "12px",
+                          textAlign: "center",
+                          borderBottom: "2px solid #e5e7eb",
+                          fontWeight: "600",
+                          width: "120px",
+                        }}
+                      >
+                        Điểm đạt được
+                      </th>
+                      <th
+                        style={{
+                          padding: "12px",
+                          textAlign: "left",
+                          borderBottom: "2px solid #e5e7eb",
+                          fontWeight: "600",
+                          width: "250px",
+                        }}
+                      >
+                        Nhận xét
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scoreDetail.criterionScores.map((criterion, index) => (
+                      <tr
+                        key={criterion.id || index}
+                        style={{
+                          borderBottom: "1px solid #e5e7eb",
+                        }}
+                      >
+                        <td style={{ padding: "12px" }}>
+                          {criterion.criterionName}
+                        </td>
+                        <td
+                          style={{
+                            padding: "12px",
+                            textAlign: "center",
+                            color: "#6b7280",
+                          }}
+                        >
+                          {criterion.maxScore}
+                        </td>
+                        <td
+                          style={{
+                            padding: "12px",
+                            textAlign: "center",
+                            fontWeight: "600",
+                            color: "#10b981",
+                          }}
+                        >
+                          {criterion.score}
+                        </td>
+                        <td style={{ padding: "12px", color: "#6b7280" }}>
+                          {criterion.comment || "-"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "20px",
+                  color: "#6b7280",
+                }}
+              >
+                Không có chi tiết điểm theo tiêu chí
+              </div>
+            )}
+          </div>
+        ) : null}
       </Modal>
 
       {/* Assign Examiner Modal */}
@@ -1727,95 +2275,6 @@ const ManagementPage = () => {
                   style={{ backgroundColor: "#a78bfa" }}
                 >
                   Phân công
-                </Button>
-              </Form.Item>
-            </Form>
-          </div>
-        )}
-      </Modal>
-
-      {/* Grade Modal */}
-      <Modal
-        title="Chấm điểm bài nộp"
-        open={isGradeModalOpen}
-        onCancel={() => {
-          setIsGradeModalOpen(false);
-          setGradingSubmission(null);
-          gradeForm.resetFields();
-        }}
-        footer={null}
-        width={500}
-        centered
-      >
-        {gradingSubmission && (
-          <div>
-            <div
-              style={{
-                marginBottom: "20px",
-                padding: "12px",
-                backgroundColor: "#f0f9ff",
-                borderRadius: "8px",
-              }}
-            >
-              <p style={{ marginBottom: "4px", color: "#666" }}>
-                <strong>Mã sinh viên:</strong>{" "}
-                {gradingSubmission.studentCode || "-"}
-              </p>
-              <p style={{ marginBottom: "4px", color: "#666" }}>
-                <strong>Điểm hiện tại:</strong>{" "}
-                {gradingSubmission.totalScore !== null
-                  ? gradingSubmission.totalScore
-                  : "Chưa chấm"}
-              </p>
-            </div>
-            <Form
-              form={gradeForm}
-              layout="vertical"
-              onFinish={handleGradeSubmit}
-            >
-              <Form.Item
-                label="Điểm số"
-                name="totalScore"
-                rules={[
-                  {
-                    required: true,
-                    message: "Vui lòng nhập điểm số!",
-                  },
-                  {
-                    type: "number",
-                    min: 0,
-                    max: 100,
-                    message: "Điểm phải từ 0 đến 100!",
-                    transform: (value) => Number(value),
-                  },
-                ]}
-              >
-                <Input
-                  type="number"
-                  placeholder="Nhập điểm (0-100)"
-                  min={0}
-                  max={100}
-                  step={0.1}
-                />
-              </Form.Item>
-              <Form.Item style={{ marginBottom: 0, textAlign: "right" }}>
-                <Button
-                  onClick={() => {
-                    setIsGradeModalOpen(false);
-                    setGradingSubmission(null);
-                    gradeForm.resetFields();
-                  }}
-                  style={{ marginRight: "8px" }}
-                >
-                  Hủy
-                </Button>
-                <Button
-                  type="primary"
-                  htmlType="submit"
-                  loading={grading}
-                  style={{ backgroundColor: "#f59e0b" }}
-                >
-                  Chấm điểm
                 </Button>
               </Form.Item>
             </Form>
