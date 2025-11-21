@@ -12,6 +12,7 @@
   "dependencies": {
     "@heroui/modal": "^2.2.24",
     "@heroui/react": "^2.8.5",
+    "@microsoft/signalr": "^10.0.0",
     "antd": "^5.28.1",
     "axios": "^1.13.2",
     "dayjs": "^1.11.19",

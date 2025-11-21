@@ -45,7 +45,7 @@ const submissionService = {
     return response.data;
   },
 
-  // Grade submission criteria
+  // Grade submission criteria (backend will send SignalR notification automatically)
   gradeCriteria: async (submissionId, scores) => {
     const response = await api.patch(`/submissions/grade-criteria`, {
       submissionId,

@@ -35,6 +35,7 @@ import submissionService from "../services/submissionService";
 import submissionDetailService from "../services/submissionDetailService";
 import violationService from "../services/violationService";
 import authService from "../services/authService";
+import signalRService from "../services/signalRService";
 import "./ManagementPage.css";
 
 const ManagementPage = () => {
@@ -116,6 +117,100 @@ const ManagementPage = () => {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSection, filterSemesterId, filterSubjectId, filterExamId]);
+
+  // Setup SignalR connection
+  useEffect(() => {
+    const handleSubmissionGraded = (data) => {
+      console.log("Submission graded via SignalR:", data);
+      message.success(`Bài nộp của ${data.studentCode} đã được chấm điểm!`);
+
+      // Reload submissions data immediately using examId from notification
+      const reloadSubmissions = async () => {
+        const examId = data.examId || filterExamId;
+        console.log("Reloading submissions for examId:", examId);
+
+        if (examId) {
+          try {
+            console.log("Calling submissionService.getByExamId...");
+            const response = await submissionService.getByExamId(examId);
+            console.log("API Response:", response);
+
+            if (response.isSuccess) {
+              setSubmissions([...response.data]); // Force new array reference
+              console.log(
+                "Submissions reloaded via SignalR:",
+                response.data.length,
+                "items"
+              );
+            } else {
+              console.error("Failed to reload submissions:", response.message);
+            }
+          } catch (error) {
+            console.error("Error reloading submissions:", error);
+          }
+        } else {
+          console.warn("No examId available to reload submissions");
+        }
+      };
+
+      reloadSubmissions();
+    };
+
+    const handleGradingProgress = (data) => {
+      console.log("Grading progress:", data);
+      // You can show progress notification here if needed
+    };
+
+    const initSignalR = async () => {
+      try {
+        await signalRService.startConnection();
+        console.log("SignalR connected successfully");
+
+        // Register event listeners
+        signalRService.on("SubmissionGraded", handleSubmissionGraded);
+        signalRService.on("GradingProgress", handleGradingProgress);
+
+        // Join exam group if viewing submissions
+        if (activeSection === "submissions" && filterExamId) {
+          console.log("Joining exam group:", filterExamId);
+          await signalRService.invoke("JoinExamGroup", filterExamId);
+        }
+      } catch (error) {
+        console.error("Failed to connect SignalR:", error);
+      }
+    };
+
+    initSignalR();
+
+    // Cleanup on unmount - DO NOT stop connection, keep it alive
+    return () => {
+      signalRService.off("SubmissionGraded", handleSubmissionGraded);
+      signalRService.off("GradingProgress", handleGradingProgress);
+      // Don't stop connection to keep receiving updates
+      // signalRService.stopConnection();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Join exam group when filterExamId changes
+  useEffect(() => {
+    const joinExamGroup = async () => {
+      if (
+        activeSection === "submissions" &&
+        filterExamId &&
+        signalRService.isConnectionActive()
+      ) {
+        try {
+          console.log("Joining exam group:", filterExamId);
+          await signalRService.invoke("JoinExamGroup", filterExamId);
+        } catch (error) {
+          console.error("Failed to join exam group:", error);
+        }
+      }
+    };
+
+    joinExamGroup();
+  }, [activeSection, filterExamId]);
 
   const loadData = async () => {
     setLoading(true);
