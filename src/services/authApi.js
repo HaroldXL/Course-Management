@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const AUTH_API_BASE_URL = 'http://localhost:8081/api';
+const AUTH_API_BASE_URL = 'http://localhost:5103/iam/api';
 
 // Create axios instance for auth endpoints
 const authApi = axios.create({

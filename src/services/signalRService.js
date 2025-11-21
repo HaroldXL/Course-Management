@@ -18,7 +18,7 @@ class SignalRService {
       const token = localStorage.getItem("token");
       
       this.connection = new signalR.HubConnectionBuilder()
-        .withUrl("http://localhost:8082/hubs/submission", {
+        .withUrl("http://localhost:5103/course/hubs/submission", {
           skipNegotiation: false,
           transport: signalR.HttpTransportType.WebSockets | signalR.HttpTransportType.ServerSentEvents | signalR.HttpTransportType.LongPolling,
           accessTokenFactory: () => token || "",

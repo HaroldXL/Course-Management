@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8083/api';
+const API_BASE_URL = 'http://localhost:5103/submission/api';
 
 // Create axios instance for submission details API
 const submissionDetailApi = axios.create({
